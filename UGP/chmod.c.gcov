@@ -1,0 +1,773 @@
+        -:    0:Source:coreutils/src/chmod.c
+        -:    0:Graph:chmod.gcno
+        -:    0:Data:chmod.gcda
+        -:    0:Runs:294
+        -:    0:Programs:1
+        -:    1:/* chmod -- change permission modes of files
+        -:    2:   Copyright (C) 1989-2023 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software: you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation, either version 3 of the License, or
+        -:    7:   (at your option) any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
+        -:   16:
+        -:   17:/* Written by David MacKenzie <djm@gnu.ai.mit.edu> */
+        -:   18:
+        -:   19:#include <config.h>
+        -:   20:#include <stdio.h>
+        -:   21:#include <getopt.h>
+        -:   22:#include <sys/types.h>
+        -:   23:
+        -:   24:#include "system.h"
+        -:   25:#include "dev-ino.h"
+        -:   26:#include "die.h"
+        -:   27:#include "error.h"
+        -:   28:#include "filemode.h"
+        -:   29:#include "ignore-value.h"
+        -:   30:#include "modechange.h"
+        -:   31:#include "quote.h"
+        -:   32:#include "root-dev-ino.h"
+        -:   33:#include "xfts.h"
+        -:   34:
+        -:   35:/* The official name of this program (e.g., no 'g' prefix).  */
+        -:   36:#define PROGRAM_NAME "chmod"
+        -:   37:
+        -:   38:#define AUTHORS \
+        -:   39:  proper_name ("David MacKenzie"), \
+        -:   40:  proper_name ("Jim Meyering")
+        -:   41:
+        -:   42:struct change_status
+        -:   43:{
+        -:   44:  enum
+        -:   45:    {
+        -:   46:      CH_NO_STAT,
+        -:   47:      CH_FAILED,
+        -:   48:      CH_NOT_APPLIED,
+        -:   49:      CH_NO_CHANGE_REQUESTED,
+        -:   50:      CH_SUCCEEDED
+        -:   51:    }
+        -:   52:    status;
+        -:   53:  mode_t old_mode;
+        -:   54:  mode_t new_mode;
+        -:   55:};
+        -:   56:
+        -:   57:enum Verbosity
+        -:   58:{
+        -:   59:  /* Print a message for each file that is processed.  */
+        -:   60:  V_high,
+        -:   61:
+        -:   62:  /* Print a message for each file whose attributes we change.  */
+        -:   63:  V_changes_only,
+        -:   64:
+        -:   65:  /* Do not be verbose.  This is the default. */
+        -:   66:  V_off
+        -:   67:};
+        -:   68:
+        -:   69:/* The desired change to the mode.  */
+        -:   70:static struct mode_change *change;
+        -:   71:
+        -:   72:/* The initial umask value, if it might be needed.  */
+        -:   73:static mode_t umask_value;
+        -:   74:
+        -:   75:/* If true, change the modes of directories recursively. */
+        -:   76:static bool recurse;
+        -:   77:
+        -:   78:/* If true, force silence (suppress most of error messages). */
+        -:   79:static bool force_silent;
+        -:   80:
+        -:   81:/* If true, diagnose surprises from naive misuses like "chmod -r file".
+        -:   82:   POSIX allows diagnostics here, as portable code is supposed to use
+        -:   83:   "chmod -- -r file".  */
+        -:   84:static bool diagnose_surprises;
+        -:   85:
+        -:   86:/* Level of verbosity.  */
+        -:   87:static enum Verbosity verbosity = V_off;
+        -:   88:
+        -:   89:/* Pointer to the device and inode numbers of '/', when --recursive.
+        -:   90:   Otherwise NULL.  */
+        -:   91:static struct dev_ino *root_dev_ino;
+        -:   92:
+        -:   93:/* For long options that have no equivalent short option, use a
+        -:   94:   non-character as a pseudo short option, starting with CHAR_MAX + 1.  */
+        -:   95:enum
+        -:   96:{
+        -:   97:  NO_PRESERVE_ROOT = CHAR_MAX + 1,
+        -:   98:  PRESERVE_ROOT,
+        -:   99:  REFERENCE_FILE_OPTION
+        -:  100:};
+        -:  101:
+        -:  102:static struct option const long_options[] =
+        -:  103:{
+        -:  104:  {"changes", no_argument, NULL, 'c'},
+        -:  105:  {"recursive", no_argument, NULL, 'R'},
+        -:  106:  {"no-preserve-root", no_argument, NULL, NO_PRESERVE_ROOT},
+        -:  107:  {"preserve-root", no_argument, NULL, PRESERVE_ROOT},
+        -:  108:  {"quiet", no_argument, NULL, 'f'},
+        -:  109:  {"reference", required_argument, NULL, REFERENCE_FILE_OPTION},
+        -:  110:  {"silent", no_argument, NULL, 'f'},
+        -:  111:  {"verbose", no_argument, NULL, 'v'},
+        -:  112:  {GETOPT_HELP_OPTION_DECL},
+        -:  113:  {GETOPT_VERSION_OPTION_DECL},
+        -:  114:  {NULL, 0, NULL, 0}
+        -:  115:};
+        -:  116:
+        -:  117:/* Return true if the chmodable permission bits of FILE changed.
+        -:  118:   The old mode was OLD_MODE, but it was changed to NEW_MODE.  */
+        -:  119:
+        -:  120:static bool
+function mode_changed called 0 returned 0% blocks executed 0%
+    #####:  121:mode_changed (int dir_fd, char const *file, char const *file_full_name,
+        -:  122:              mode_t old_mode, mode_t new_mode)
+        -:  123:{
+    #####:  124:  if (new_mode & (S_ISUID | S_ISGID | S_ISVTX))
+branch  0 never executed
+branch  1 never executed
+        -:  125:    {
+        -:  126:      /* The new mode contains unusual bits that the call to chmod may
+        -:  127:         have silently cleared.  Check whether they actually changed.  */
+        -:  128:
+        -:  129:      struct stat new_stats;
+        -:  130:
+    #####:  131:      if (fstatat (dir_fd, file, &new_stats, 0) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  132:        {
+    #####:  133:          if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  134:            error (0, errno, _("getting new attributes of %s"),
+call    0 never executed
+        -:  135:                   quoteaf (file_full_name));
+    #####:  136:          return false;
+        -:  137:        }
+        -:  138:
+    #####:  139:      new_mode = new_stats.st_mode;
+        -:  140:    }
+        -:  141:
+    #####:  142:  return ((old_mode ^ new_mode) & CHMOD_MODE_BITS) != 0;
+        -:  143:}
+        -:  144:
+        -:  145:/* Tell the user how/if the MODE of FILE has been changed.
+        -:  146:   CH describes what (if anything) has happened. */
+        -:  147:
+        -:  148:static void
+function describe_change called 0 returned 0% blocks executed 0%
+    #####:  149:describe_change (char const *file, struct change_status const *ch)
+        -:  150:{
+        -:  151:  char perms[12];		/* "-rwxrwxrwx" ls-style modes. */
+        -:  152:  char old_perms[12];
+        -:  153:  char const *fmt;
+    #####:  154:  char const *quoted_file = quoteaf (file);
+call    0 never executed
+        -:  155:
+    #####:  156:  switch (ch->status)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  157:    {
+    #####:  158:    case CH_NOT_APPLIED:
+    #####:  159:      printf (_("neither symbolic link %s nor referent has been changed\n"),
+call    0 never executed
+        -:  160:              quoted_file);
+    #####:  161:      return;
+        -:  162:
+    #####:  163:    case CH_NO_STAT:
+    #####:  164:      printf (_("%s could not be accessed\n"), quoted_file);
+call    0 never executed
+    #####:  165:      return;
+        -:  166:
+    #####:  167:    default:
+    #####:  168:      break;
+        -:  169:  }
+        -:  170:
+        -:  171:  unsigned long int
+    #####:  172:    old_m = ch->old_mode & CHMOD_MODE_BITS,
+    #####:  173:    m = ch->new_mode & CHMOD_MODE_BITS;
+        -:  174:
+    #####:  175:  strmode (ch->new_mode, perms);
+call    0 never executed
+    #####:  176:  perms[10] = '\0';		/* Remove trailing space.  */
+        -:  177:
+    #####:  178:  strmode (ch->old_mode, old_perms);
+call    0 never executed
+    #####:  179:  old_perms[10] = '\0';		/* Remove trailing space.  */
+        -:  180:
+    #####:  181:  switch (ch->status)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  182:    {
+    #####:  183:    case CH_SUCCEEDED:
+    #####:  184:      fmt = _("mode of %s changed from %04lo (%s) to %04lo (%s)\n");
+    #####:  185:      break;
+    #####:  186:    case CH_FAILED:
+    #####:  187:      fmt = _("failed to change mode of %s from %04lo (%s) to %04lo (%s)\n");
+    #####:  188:      break;
+    #####:  189:    case CH_NO_CHANGE_REQUESTED:
+    #####:  190:      fmt = _("mode of %s retained as %04lo (%s)\n");
+    #####:  191:      printf (fmt, quoted_file, m, &perms[1]);
+call    0 never executed
+    #####:  192:      return;
+    #####:  193:    default:
+    #####:  194:      abort ();
+call    0 never executed
+        -:  195:    }
+    #####:  196:  printf (fmt, quoted_file, old_m, &old_perms[1], m, &perms[1]);
+call    0 never executed
+        -:  197:}
+        -:  198:
+        -:  199:/* Change the mode of FILE.
+        -:  200:   Return true if successful.  This function is called
+        -:  201:   once for every file system object that fts encounters.  */
+        -:  202:
+        -:  203:static bool
+function process_file called 0 returned 0% blocks executed 0%
+    #####:  204:process_file (FTS *fts, FTSENT *ent)
+        -:  205:{
+    #####:  206:  char const *file_full_name = ent->fts_path;
+    #####:  207:  char const *file = ent->fts_accpath;
+    #####:  208:  const struct stat *file_stats = ent->fts_statp;
+    #####:  209:  struct change_status ch = { 0, };
+    #####:  210:  ch.status = CH_NO_STAT;
+        -:  211:
+    #####:  212:  switch (ent->fts_info)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+        -:  213:    {
+    #####:  214:    case FTS_DP:
+    #####:  215:      return true;
+        -:  216:
+    #####:  217:    case FTS_NS:
+        -:  218:      /* For a top-level file or directory, this FTS_NS (stat failed)
+        -:  219:         indicator is determined at the time of the initial fts_open call.
+        -:  220:         With programs like chmod, chown, and chgrp, that modify
+        -:  221:         permissions, it is possible that the file in question is
+        -:  222:         accessible when control reaches this point.  So, if this is
+        -:  223:         the first time we've seen the FTS_NS for this file, tell
+        -:  224:         fts_read to stat it "again".  */
+    #####:  225:      if (ent->fts_level == 0 && ent->fts_number == 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  226:        {
+    #####:  227:          ent->fts_number = 1;
+    #####:  228:          fts_set (fts, ent, FTS_AGAIN);
+call    0 never executed
+    #####:  229:          return true;
+        -:  230:        }
+    #####:  231:      if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  232:        error (0, ent->fts_errno, _("cannot access %s"),
+call    0 never executed
+        -:  233:               quoteaf (file_full_name));
+    #####:  234:      break;
+        -:  235:
+    #####:  236:    case FTS_ERR:
+    #####:  237:      if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  238:        error (0, ent->fts_errno, "%s", quotef (file_full_name));
+call    0 never executed
+    #####:  239:      break;
+        -:  240:
+    #####:  241:    case FTS_DNR:
+    #####:  242:      if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  243:        error (0, ent->fts_errno, _("cannot read directory %s"),
+call    0 never executed
+        -:  244:               quoteaf (file_full_name));
+    #####:  245:      break;
+        -:  246:
+    #####:  247:    case FTS_SLNONE:
+    #####:  248:      if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  249:        error (0, 0, _("cannot operate on dangling symlink %s"),
+call    0 never executed
+        -:  250:               quoteaf (file_full_name));
+    #####:  251:      break;
+        -:  252:
+    #####:  253:    case FTS_DC:		/* directory that causes cycles */
+    #####:  254:      if (cycle_warning_required (fts, ent))
+branch  0 never executed
+branch  1 never executed
+        -:  255:        {
+    #####:  256:          emit_cycle_warning (file_full_name);
+call    0 never executed
+    #####:  257:          return false;
+        -:  258:        }
+        -:  259:      FALLTHROUGH;
+        -:  260:    default:
+    #####:  261:      ch.status = CH_NOT_APPLIED;
+    #####:  262:      break;
+        -:  263:    }
+        -:  264:
+    #####:  265:  if (ch.status == CH_NOT_APPLIED
+branch  0 never executed
+branch  1 never executed
+    #####:  266:      && ROOT_DEV_INO_CHECK (root_dev_ino, file_stats))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  267:    {
+    #####:  268:      ROOT_DEV_INO_WARN (file_full_name);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+call    3 never executed
+call    4 never executed
+        -:  269:      /* Tell fts not to traverse into this hierarchy.  */
+    #####:  270:      fts_set (fts, ent, FTS_SKIP);
+call    0 never executed
+        -:  271:      /* Ensure that we do not process "/" on the second visit.  */
+    #####:  272:      ignore_value (fts_read (fts));
+call    0 never executed
+    #####:  273:      return false;
+        -:  274:    }
+        -:  275:
+    #####:  276:  if (ch.status == CH_NOT_APPLIED && ! S_ISLNK (file_stats->st_mode))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  277:    {
+    #####:  278:      ch.old_mode = file_stats->st_mode;
+    #####:  279:      ch.new_mode = mode_adjust (ch.old_mode, S_ISDIR (ch.old_mode) != 0,
+call    0 never executed
+        -:  280:                                 umask_value, change, NULL);
+    #####:  281:      if (chmodat (fts->fts_cwd_fd, file, ch.new_mode) == 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  282:        ch.status = CH_SUCCEEDED;
+        -:  283:      else
+        -:  284:        {
+    #####:  285:          if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  286:            error (0, errno, _("changing permissions of %s"),
+call    0 never executed
+        -:  287:                   quoteaf (file_full_name));
+    #####:  288:          ch.status = CH_FAILED;
+        -:  289:        }
+        -:  290:    }
+        -:  291:
+    #####:  292:  if (verbosity != V_off)
+branch  0 never executed
+branch  1 never executed
+        -:  293:    {
+    #####:  294:      if (ch.status == CH_SUCCEEDED
+branch  0 never executed
+branch  1 never executed
+    #####:  295:          && !mode_changed (fts->fts_cwd_fd, file, file_full_name,
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  296:                            ch.old_mode, ch.new_mode))
+    #####:  297:        ch.status = CH_NO_CHANGE_REQUESTED;
+        -:  298:
+    #####:  299:      if (ch.status == CH_SUCCEEDED || verbosity == V_high)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  300:        describe_change (file_full_name, &ch);
+call    0 never executed
+        -:  301:    }
+        -:  302:
+    #####:  303:  if (CH_NO_CHANGE_REQUESTED <= ch.status && diagnose_surprises)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  304:    {
+    #####:  305:      mode_t naively_expected_mode =
+call    0 never executed
+    #####:  306:        mode_adjust (ch.old_mode, S_ISDIR (ch.old_mode) != 0, 0, change, NULL);
+    #####:  307:      if (ch.new_mode & ~naively_expected_mode)
+branch  0 never executed
+branch  1 never executed
+        -:  308:        {
+        -:  309:          char new_perms[12];
+        -:  310:          char naively_expected_perms[12];
+    #####:  311:          strmode (ch.new_mode, new_perms);
+call    0 never executed
+    #####:  312:          strmode (naively_expected_mode, naively_expected_perms);
+call    0 never executed
+    #####:  313:          new_perms[10] = naively_expected_perms[10] = '\0';
+    #####:  314:          error (0, 0,
+call    0 never executed
+    #####:  315:                 _("%s: new permissions are %s, not %s"),
+        -:  316:                 quotef (file_full_name),
+        -:  317:                 new_perms + 1, naively_expected_perms + 1);
+    #####:  318:          ch.status = CH_FAILED;
+        -:  319:        }
+        -:  320:    }
+        -:  321:
+    #####:  322:  if ( ! recurse)
+branch  0 never executed
+branch  1 never executed
+    #####:  323:    fts_set (fts, ent, FTS_SKIP);
+call    0 never executed
+        -:  324:
+    #####:  325:  return CH_NOT_APPLIED <= ch.status;
+        -:  326:}
+        -:  327:
+        -:  328:/* Recursively change the modes of the specified FILES (the last entry
+        -:  329:   of which is NULL).  BIT_FLAGS controls how fts works.
+        -:  330:   Return true if successful.  */
+        -:  331:
+        -:  332:static bool
+function process_files called 0 returned 0% blocks executed 0%
+    #####:  333:process_files (char **files, int bit_flags)
+        -:  334:{
+    #####:  335:  bool ok = true;
+        -:  336:
+    #####:  337:  FTS *fts = xfts_open (files, bit_flags, NULL);
+call    0 never executed
+        -:  338:
+        -:  339:  while (true)
+    #####:  340:    {
+        -:  341:      FTSENT *ent;
+        -:  342:
+    #####:  343:      ent = fts_read (fts);
+call    0 never executed
+    #####:  344:      if (ent == NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  345:        {
+    #####:  346:          if (errno != 0)
+branch  0 never executed
+branch  1 never executed
+        -:  347:            {
+        -:  348:              /* FIXME: try to give a better message  */
+    #####:  349:              if (! force_silent)
+branch  0 never executed
+branch  1 never executed
+    #####:  350:                error (0, errno, _("fts_read failed"));
+    #####:  351:              ok = false;
+        -:  352:            }
+    #####:  353:          break;
+        -:  354:        }
+        -:  355:
+    #####:  356:      ok &= process_file (fts, ent);
+call    0 never executed
+        -:  357:    }
+        -:  358:
+    #####:  359:  if (fts_close (fts) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  360:    {
+    #####:  361:      error (0, errno, _("fts_close failed"));
+    #####:  362:      ok = false;
+        -:  363:    }
+        -:  364:
+    #####:  365:  return ok;
+        -:  366:}
+        -:  367:
+        -:  368:void
+function usage called 294 returned 0% blocks executed 23%
+      294:  369:usage (int status)
+        -:  370:{
+      294:  371:  if (status != EXIT_SUCCESS)
+branch  0 taken 294 (fallthrough)
+branch  1 taken 0
+      294:  372:    emit_try_help ();
+call    0 returned 294
+        -:  373:  else
+        -:  374:    {
+    #####:  375:      printf (_("\
+call    0 never executed
+        -:  376:Usage: %s [OPTION]... MODE[,MODE]... FILE...\n\
+        -:  377:  or:  %s [OPTION]... OCTAL-MODE FILE...\n\
+        -:  378:  or:  %s [OPTION]... --reference=RFILE FILE...\n\
+        -:  379:"),
+        -:  380:              program_name, program_name, program_name);
+    #####:  381:      fputs (_("\
+call    0 never executed
+        -:  382:Change the mode of each FILE to MODE.\n\
+        -:  383:With --reference, change the mode of each FILE to that of RFILE.\n\
+        -:  384:\n\
+        -:  385:"), stdout);
+    #####:  386:      fputs (_("\
+call    0 never executed
+        -:  387:  -c, --changes          like verbose but report only when a change is made\n\
+        -:  388:  -f, --silent, --quiet  suppress most error messages\n\
+        -:  389:  -v, --verbose          output a diagnostic for every file processed\n\
+        -:  390:"), stdout);
+    #####:  391:      fputs (_("\
+call    0 never executed
+        -:  392:      --no-preserve-root  do not treat '/' specially (the default)\n\
+        -:  393:      --preserve-root    fail to operate recursively on '/'\n\
+        -:  394:"), stdout);
+    #####:  395:      fputs (_("\
+call    0 never executed
+        -:  396:      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n\
+        -:  397:                         RFILE is always dereferenced if a symbolic link.\n\
+        -:  398:"), stdout);
+    #####:  399:      fputs (_("\
+call    0 never executed
+        -:  400:  -R, --recursive        change files and directories recursively\n\
+        -:  401:"), stdout);
+    #####:  402:      fputs (HELP_OPTION_DESCRIPTION, stdout);
+call    0 never executed
+    #####:  403:      fputs (VERSION_OPTION_DESCRIPTION, stdout);
+call    0 never executed
+    #####:  404:      fputs (_("\
+call    0 never executed
+        -:  405:\n\
+        -:  406:Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n\
+        -:  407:"), stdout);
+    #####:  408:      emit_ancillary_info (PROGRAM_NAME);
+call    0 never executed
+        -:  409:    }
+      294:  410:  exit (status);
+        -:  411:}
+        -:  412:
+        -:  413:/* Parse the ASCII mode given on the command line into a linked list
+        -:  414:   of 'struct mode_change' and apply that to each file argument. */
+        -:  415:
+        -:  416:int
+function main called 294 returned 0% blocks executed 27%
+      294:  417:main (int argc, char **argv)
+        -:  418:{
+      294:  419:  char *mode = NULL;
+      294:  420:  size_t mode_len = 0;
+      294:  421:  size_t mode_alloc = 0;
+        -:  422:  bool ok;
+      294:  423:  bool preserve_root = false;
+      294:  424:  char const *reference_file = NULL;
+        -:  425:  int c;
+        -:  426:
+        -:  427:  initialize_main (&argc, &argv);
+      294:  428:  set_program_name (argv[0]);
+call    0 returned 294
+      294:  429:  setlocale (LC_ALL, "");
+call    0 returned 294
+      294:  430:  bindtextdomain (PACKAGE, LOCALEDIR);
+call    0 returned 294
+      294:  431:  textdomain (PACKAGE);
+call    0 returned 294
+        -:  432:
+      294:  433:  atexit (close_stdout);
+call    0 returned 294
+        -:  434:
+      294:  435:  recurse = force_silent = diagnose_surprises = false;
+        -:  436:
+      588:  437:  while ((c = getopt_long (argc, argv,
+call    0 returned 294
+branch  1 taken 0
+branch  2 taken 294 (fallthrough)
+        -:  438:                           ("Rcfvr::w::x::X::s::t::u::g::o::a::,::+::=::"
+        -:  439:                            "0::1::2::3::4::5::6::7::"),
+        -:  440:                           long_options, NULL))
+        -:  441:         != -1)
+        -:  442:    {
+    #####:  443:      switch (c)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+        -:  444:        {
+    #####:  445:        case 'r':
+        -:  446:        case 'w':
+        -:  447:        case 'x':
+        -:  448:        case 'X':
+        -:  449:        case 's':
+        -:  450:        case 't':
+        -:  451:        case 'u':
+        -:  452:        case 'g':
+        -:  453:        case 'o':
+        -:  454:        case 'a':
+        -:  455:        case ',':
+        -:  456:        case '+':
+        -:  457:        case '=':
+        -:  458:        case '0': case '1': case '2': case '3':
+        -:  459:        case '4': case '5': case '6': case '7':
+        -:  460:          /* Support nonportable uses like "chmod -w", but diagnose
+        -:  461:             surprises due to umask confusion.  Even though "--", "--r",
+        -:  462:             etc., are valid modes, there is no "case '-'" here since
+        -:  463:             getopt_long reserves leading "--" for long options.  */
+        -:  464:          {
+        -:  465:            /* Allocate a mode string (e.g., "-rwx") by concatenating
+        -:  466:               the argument containing this option.  If a previous mode
+        -:  467:               string was given, concatenate the previous string, a
+        -:  468:               comma, and the new string (e.g., "-s,-rwx").  */
+        -:  469:
+    #####:  470:            char const *arg = argv[optind - 1];
+    #####:  471:            size_t arg_len = strlen (arg);
+    #####:  472:            size_t mode_comma_len = mode_len + !!mode_len;
+    #####:  473:            size_t new_mode_len = mode_comma_len + arg_len;
+    #####:  474:            if (mode_alloc <= new_mode_len)
+branch  0 never executed
+branch  1 never executed
+        -:  475:              {
+    #####:  476:                mode_alloc = new_mode_len + 1;
+    #####:  477:                mode = X2REALLOC (mode, &mode_alloc);
+call    0 never executed
+        -:  478:              }
+    #####:  479:            mode[mode_len] = ',';
+    #####:  480:            memcpy (mode + mode_comma_len, arg, arg_len + 1);
+    #####:  481:            mode_len = new_mode_len;
+        -:  482:
+    #####:  483:            diagnose_surprises = true;
+        -:  484:          }
+    #####:  485:          break;
+    #####:  486:        case NO_PRESERVE_ROOT:
+    #####:  487:          preserve_root = false;
+    #####:  488:          break;
+    #####:  489:        case PRESERVE_ROOT:
+    #####:  490:          preserve_root = true;
+    #####:  491:          break;
+    #####:  492:        case REFERENCE_FILE_OPTION:
+    #####:  493:          reference_file = optarg;
+    #####:  494:          break;
+    #####:  495:        case 'R':
+    #####:  496:          recurse = true;
+    #####:  497:          break;
+    #####:  498:        case 'c':
+    #####:  499:          verbosity = V_changes_only;
+    #####:  500:          break;
+    #####:  501:        case 'f':
+    #####:  502:          force_silent = true;
+    #####:  503:          break;
+    #####:  504:        case 'v':
+    #####:  505:          verbosity = V_high;
+    #####:  506:          break;
+    #####:  507:        case_GETOPT_HELP_CHAR;
+call    0 never executed
+    #####:  508:        case_GETOPT_VERSION_CHAR (PROGRAM_NAME, AUTHORS);
+call    0 never executed
+call    1 never executed
+    #####:  509:        default:
+    #####:  510:          usage (EXIT_FAILURE);
+call    0 never executed
+        -:  511:        }
+        -:  512:    }
+        -:  513:
+      294:  514:  if (reference_file)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 294
+        -:  515:    {
+    #####:  516:      if (mode)
+branch  0 never executed
+branch  1 never executed
+        -:  517:        {
+    #####:  518:          error (0, 0, _("cannot combine mode and --reference options"));
+    #####:  519:          usage (EXIT_FAILURE);
+call    0 never executed
+        -:  520:        }
+        -:  521:    }
+        -:  522:  else
+        -:  523:    {
+      294:  524:      if (!mode)
+branch  0 taken 294 (fallthrough)
+branch  1 taken 0
+      294:  525:        mode = argv[optind++];
+        -:  526:    }
+        -:  527:
+      294:  528:  if (optind >= argc)
+branch  0 taken 294 (fallthrough)
+branch  1 taken 0
+        -:  529:    {
+      294:  530:      if (!mode || mode != argv[optind - 1])
+branch  0 taken 0 (fallthrough)
+branch  1 taken 294
+branch  2 never executed
+branch  3 never executed
+      588:  531:        error (0, 0, _("missing operand"));
+        -:  532:      else
+    #####:  533:        error (0, 0, _("missing operand after %s"), quote (argv[argc - 1]));
+call    0 never executed
+      294:  534:      usage (EXIT_FAILURE);
+call    0 returned 0
+        -:  535:    }
+        -:  536:
+    #####:  537:  if (reference_file)
+branch  0 never executed
+branch  1 never executed
+        -:  538:    {
+    #####:  539:      change = mode_create_from_ref (reference_file);
+call    0 never executed
+    #####:  540:      if (!change)
+branch  0 never executed
+branch  1 never executed
+    #####:  541:        die (EXIT_FAILURE, errno, _("failed to get attributes of %s"),
+call    0 never executed
+call    1 never executed
+        -:  542:             quoteaf (reference_file));
+        -:  543:    }
+        -:  544:  else
+        -:  545:    {
+    #####:  546:      change = mode_compile (mode);
+call    0 never executed
+    #####:  547:      if (!change)
+branch  0 never executed
+branch  1 never executed
+        -:  548:        {
+    #####:  549:          error (0, 0, _("invalid mode: %s"), quote (mode));
+call    0 never executed
+    #####:  550:          usage (EXIT_FAILURE);
+call    0 never executed
+        -:  551:        }
+    #####:  552:      umask_value = umask (0);
+call    0 never executed
+        -:  553:    }
+        -:  554:
+    #####:  555:  if (recurse && preserve_root)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  556:    {
+        -:  557:      static struct dev_ino dev_ino_buf;
+    #####:  558:      root_dev_ino = get_root_dev_ino (&dev_ino_buf);
+call    0 never executed
+    #####:  559:      if (root_dev_ino == NULL)
+branch  0 never executed
+branch  1 never executed
+    #####:  560:        die (EXIT_FAILURE, errno, _("failed to get attributes of %s"),
+call    0 never executed
+call    1 never executed
+        -:  561:             quoteaf ("/"));
+        -:  562:    }
+        -:  563:  else
+        -:  564:    {
+    #####:  565:      root_dev_ino = NULL;
+        -:  566:    }
+        -:  567:
+    #####:  568:  ok = process_files (argv + optind,
+call    0 never executed
+        -:  569:                      FTS_COMFOLLOW | FTS_PHYSICAL | FTS_DEFER_STAT);
+        -:  570:
+    #####:  571:  main_exit (ok ? EXIT_SUCCESS : EXIT_FAILURE);
+        -:  572:}

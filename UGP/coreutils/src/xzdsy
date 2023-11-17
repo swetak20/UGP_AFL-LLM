@@ -1,0 +1,1 @@
+  sparse    try to seek rather than write all-NUL output blocks

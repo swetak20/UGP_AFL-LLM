@@ -1,0 +1,1 @@
+  ibs=BYTES       read up to BYTES bytes at a time (default: 512)

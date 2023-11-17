@@ -1,0 +1,4 @@
+If N ends in 'B', it counts bytes not blocks.
+
+Each CONV symbol may be:
+

@@ -1,0 +1,1 @@
+  obs=BYTES       write BYTES bytes at a time (default: 512)

@@ -1,0 +1,1 @@
+  sync      pad every input block with NULs to ibs-size; when used
